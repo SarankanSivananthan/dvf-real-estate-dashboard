@@ -1,0 +1,9 @@
+.DS_Store
+._*
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Large DVF source files — see README for download instructions
+data/full_2019.csv
+data/sampled_2020_by_dep.csv
