@@ -92,20 +92,39 @@ def process(df1 , df_dept):
     return df1
 
 
+YEAR_FILES = {
+    2019: "data/full_2019.csv",
+    2020: "data/sampled_2020_by_dep.csv",
+    2021: "data/dvf_2021.csv",
+    2022: "data/dvf_2022.csv",
+    2023: "data/dvf_2023.csv",
+    2024: "data/dvf_2024.csv",
+}
 
-def general_viz(datasets):
+
+@st.cache_data
+def load_year_data(year):
+    df_dept = read_main_CSV("data/departements-france.csv")
+    raw = read_main_CSV(YEAR_FILES[year])
+    sampled = sample(raw, 0.05)
+    return process(sampled, df_dept)
+
+
+
+def general_viz():
     import pandas as pd
-    import streamlit as st 
+    import streamlit as st
     import plotly.express as px
 
-    
+
     #st.markdown(f"# {list(page_names_to_funcs.keys())[1]}")
 
     st.title('General Visualization')
 
-    year = st.sidebar.slider('Year' , 2019 , 2020)
+    year = st.sidebar.slider('Year' , min(YEAR_FILES) , max(YEAR_FILES))
 
-    data = datasets[year]
+    with st.spinner(f"Loading {year} data..."):
+        data = load_year_data(year)
 
     
 
@@ -207,16 +226,17 @@ def general_viz(datasets):
 
     st.plotly_chart(fig)
 
-def exploration(datasets):
+def exploration():
 
     import streamlit as st
     import plotly.express as px
 
     st.title("Your exploration :mag_right:")
 
-    year = st.sidebar.slider('Year' , 2019 , 2020)
+    year = st.sidebar.slider('Year' , min(YEAR_FILES) , max(YEAR_FILES))
 
-    data = datasets[year]
+    with st.spinner(f"Loading {year} data..."):
+        data = load_year_data(year)
 
 
     option_mutation = st.selectbox(
@@ -349,49 +369,12 @@ def exploration(datasets):
         st.plotly_chart(fig)
 
 @st.cache_resource
-def train_price_model(df_train):
-    import numpy as np
-    from sklearn.compose import ColumnTransformer
-    from sklearn.ensemble import RandomForestRegressor
-    from sklearn.metrics import mean_absolute_error, r2_score
-    from sklearn.model_selection import train_test_split
-    from sklearn.pipeline import Pipeline
-    from sklearn.preprocessing import OneHotEncoder
-
-    feature_cols = ['type_local', 'surface_reelle_bati', 'nombre_pieces_principales', 'nom_departement']
-
-    mask = (
-        (df_train['nature_mutation'] == 'Vente')
-        & df_train['type_local'].isin(['Maison', 'Appartement'])
-        & (df_train['surface_reelle_bati'] > 8)
-        & df_train['nombre_pieces_principales'].notna()
-        & df_train['valeur_fonciere'].between(5000, 2_000_000)
-    )
-    data = df_train.loc[mask, feature_cols + ['valeur_fonciere']].dropna()
-
-    X = data[feature_cols]
-    y = np.log1p(data['valeur_fonciere'])
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-    preprocessor = ColumnTransformer([
-        ('categorical', OneHotEncoder(handle_unknown='ignore'), ['type_local', 'nom_departement']),
-    ], remainder='passthrough')
-
-    model = Pipeline([
-        ('preprocessor', preprocessor),
-        ('regressor', RandomForestRegressor(n_estimators=60, max_depth=10, min_samples_leaf=15, n_jobs=-1, random_state=42)),
-    ])
-    model.fit(X_train, y_train)
-
-    predictions = model.predict(X_test)
-    r2 = r2_score(np.expm1(y_test), np.expm1(predictions))
-    mae = mean_absolute_error(np.expm1(y_test), np.expm1(predictions))
-
-    return model, r2, mae, sorted(data['nom_departement'].unique())
+def load_price_model():
+    import joblib
+    return joblib.load("model/price_model.joblib")
 
 
-def prediction(df_train):
+def prediction():
     import numpy as np
     import pandas as pd
     import streamlit as st
@@ -400,30 +383,52 @@ def prediction(df_train):
 
     st.write(
         "Estimate the sale price of a house or an apartment from its characteristics, "
-        "using a Random Forest model trained on 2019 DVF sales data."
+        "using a model trained on the most recent full years of DVF sales — so the "
+        "estimate reflects today's market."
     )
 
-    with st.spinner("Training the price estimation model..."):
-        model, r2, mae, departements = train_price_model(df_train)
+    artifact = load_price_model()
+    model = artifact["model"]
+    communes = artifact["communes"]
+    commune_lookup = artifact["commune_lookup"]
+    dept_fallback = artifact["dept_fallback"]
+    latest_year = max(artifact["train_years"])
 
-    st.caption(f"Model performance on held-out data — R²: {r2:.2f} · Mean absolute error: €{mae:,.0f}")
+    st.caption(
+        f"Trained on {'–'.join(str(y) for y in artifact['train_years'])} sales — "
+        f"R²: {artifact['r2']:.2f} · Mean absolute error: €{artifact['mae']:,.0f}"
+    )
 
     col1, col2 = st.columns(2)
 
     with col1:
         type_local = st.selectbox("Property type", ["Appartement", "Maison"])
+        departements = sorted(communes["nom_departement"].unique())
         default_dept = departements.index("Paris") if "Paris" in departements else 0
         departement = st.selectbox("Departement", departements, index=default_dept)
 
+        communes_in_dept = communes.loc[communes["nom_departement"] == departement]
+        commune_row = st.selectbox(
+            "Commune",
+            communes_in_dept.itertuples(),
+            format_func=lambda row: row.nom_commune,
+        )
+
     with col2:
-        surface = st.number_input("Living area (m²)", min_value=9, max_value=1000, value=60, step=1)
-        rooms = st.number_input("Number of main rooms", min_value=1, max_value=20, value=3, step=1)
+        surface = st.number_input("Living area (m²)", min_value=9, max_value=500, value=60, step=1)
+        rooms = st.number_input("Number of main rooms", min_value=1, max_value=12, value=3, step=1)
+
+    price_signal = commune_lookup.get(
+        (commune_row.code_commune, type_local),
+        dept_fallback.get((commune_row.code_departement, type_local)),
+    )
 
     to_predict = pd.DataFrame([{
         "type_local": type_local,
         "surface_reelle_bati": surface,
         "nombre_pieces_principales": rooms,
-        "nom_departement": departement,
+        "annee_mutation": latest_year,
+        "price_signal": price_signal,
     }])
 
     predicted_price = np.expm1(model.predict(to_predict))[0]
@@ -436,40 +441,16 @@ def prediction(df_train):
     metric_col2.metric("Price per m²", f"€{price_per_m2:,.0f}")
 
     st.caption(
-        "⚠️ Indicative estimate based on property type, surface, room count and department "
-        "only — it does not account for exact location, condition or amenities, and is not "
-        "a substitute for a professional appraisal."
+        "⚠️ Indicative estimate based on property type, surface, room count and the "
+        "selected commune's recent price level only — it does not account for exact "
+        "address, floor, condition or amenities, and is not a substitute for a "
+        "professional appraisal."
     )
 
 
 
 
 def main():
-    df2019 = read_main_CSV("data/full_2019.csv")
-
-    df_dept = read_main_CSV('data/departements-france.csv')
-
-    df2019_sample_big = sample(df2019 , 0.3)
-
-    df2019_sample_small = sample(df2019 , 0.05)
-
-    df2020 = read_main_CSV("data/sampled_2020_by_dep.csv")
-
-    df2020_sample_big = sample(df2020 , 0.3)
-
-    df2020_sample_small = sample(df2020 , 0.05)
-
-    
-
-    df2019_sample_small = process(df2019_sample_small , df_dept)
-    df2020_sample_small = process(df2020_sample_small , df_dept)
-    df2019_sample_big = process(df2019_sample_big , df_dept)
-
-    datasets = {2019 : df2019_sample_small,
-                2020 : df2020_sample_small}
-
-
-
     page_names_to_funcs = {
             "Home page 🏠": intro,
             "General Visualizations 📊": general_viz,
@@ -478,12 +459,7 @@ def main():
     }
 
     demo_name = st.sidebar.selectbox("Exploration Type", page_names_to_funcs.keys())
-    if demo_name == "Home page 🏠":
-        page_names_to_funcs[demo_name]()
-    elif demo_name == "Estimation - Prediction 🧠":
-        page_names_to_funcs[demo_name](df2019_sample_big)
-    else:
-        page_names_to_funcs[demo_name](datasets)
+    page_names_to_funcs[demo_name]()
 
 
 

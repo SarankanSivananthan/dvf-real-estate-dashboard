@@ -7,3 +7,7 @@ __pycache__/
 # Large DVF source files — see README for download instructions
 data/full_2019.csv
 data/sampled_2020_by_dep.csv
+data/dvf_2021.csv
+data/dvf_2022.csv
+data/dvf_2023.csv
+data/dvf_2024.csv
