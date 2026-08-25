@@ -61,6 +61,14 @@ def merge(df1 , df2 , on , how):
 @st.cache_data
 def process(df1 , df_dept):
 
+    # DVF records the full transaction value on every row of a bulk sale
+    # (e.g. a whole apartment building sold as one mutation, split into one
+    # row per unit) instead of splitting it per unit. Excluding mutations
+    # that contain more than one Maison/Appartement row avoids those rows
+    # blowing up any price aggregate.
+    residential = df1['type_local'].isin(['Maison', 'Appartement'])
+    residential_units_per_mutation = df1[residential].groupby('id_mutation').size()
+    df1 = df1[df1['id_mutation'].map(residential_units_per_mutation).fillna(0) <= 1]
 
     df1['date_mutation'] = pd.to_datetime(df1['date_mutation'])
 
@@ -108,6 +116,15 @@ def load_year_data(year):
     raw = read_main_CSV(YEAR_FILES[year])
     sampled = sample(raw, 0.05)
     return process(sampled, df_dept)
+
+
+@st.cache_data
+def year_price_summary(year):
+    data = load_year_data(year)
+    mask = (data['prix_m_carre'] != np.inf) & data['type_local'].isin(['Maison', 'Appartement'])
+    summary = data[mask].groupby('type_local')['prix_m_carre'].median().reset_index()
+    summary['year'] = year
+    return summary
 
 
 
@@ -179,13 +196,29 @@ def general_viz():
     st.text("")
     st.text("")
 
-    st.write('Local mean price by Departement - France ' + str(year))
+    st.write('Local median price by Departement - France ' + str(year))
+    st.caption("Maison and Appartement only, departments with under 20 sampled sales excluded. Median rather than mean, since a handful of outlier prices in the raw DVF data would otherwise dominate the average.")
 
-    df_mean_price_by_local = pd.DataFrame(data.groupby(by = ['nom_departement' , 'type_local'])['valeur_fonciere'].mean().reset_index())
+    mask_residential = data['type_local'].isin(['Maison', 'Appartement'])
+    df_median_price_by_local = (
+        data[mask_residential]
+        .groupby(by = ['nom_departement' , 'type_local'])['valeur_fonciere']
+        .agg(['median', 'count'])
+        .reset_index()
+    )
+    df_median_price_by_local = df_median_price_by_local[df_median_price_by_local['count'] >= 20]
 
-    df_mean_price_by_local = df_mean_price_by_local.rename(columns={'valeur_fonciere': 'mean price'})
+    df_median_price_by_local = df_median_price_by_local.rename(columns={'median': 'median price'})
 
-    fig = px.bar(df_mean_price_by_local , x = 'nom_departement' , y = 'mean price' , color = 'type_local')
+    dept_order = (
+        df_median_price_by_local.groupby('nom_departement')['median price'].median().sort_values().index
+    )
+
+    fig = px.bar(
+        df_median_price_by_local , x = 'median price' , y = 'nom_departement' , color = 'type_local' ,
+        orientation = 'h' , category_orders = {'nom_departement': list(dept_order)},
+    )
+    fig.update_layout(height=1400)
 
     st.plotly_chart(fig)
 
@@ -196,13 +229,14 @@ def general_viz():
     st.text("")
     st.text("")
 
-    st.write('Square meter price by region - France ' + str(year))
+    st.write('Square meter median price by region - France ' + str(year))
 
     ##mask_maison_appartement = (data['type_local'] == 'Maison') | (data['type_local'] == 'Appartement')
 
     mask_prix_m_carre_diff_inf = data['prix_m_carre'] != np.inf
 
-    df_price_by_region = pd.DataFrame(data[mask_prix_m_carre_diff_inf].groupby(by = 'nom_region')['prix_m_carre'].mean().reset_index())
+    df_price_by_region = pd.DataFrame(data[mask_prix_m_carre_diff_inf].groupby(by = 'nom_region')['prix_m_carre'].median().reset_index())
+    df_price_by_region = df_price_by_region.sort_values('prix_m_carre', ascending=False)
 
     fig = px.bar(df_price_by_region , x = 'nom_region' , y = 'prix_m_carre')
 
@@ -217,14 +251,36 @@ def general_viz():
     st.text("")
     st.text("")
 
-    st.write('Mutations - France ' + str(year))
+    st.write('Mutation density - France ' + str(year))
     mask_dom_tom = ~data['nom_departement'].isin(['Guadeloupe' , 'Guyane' , 'La Réunion' , 'Martinique'])
-    fig = px.scatter(data[mask_dom_tom] , x = 'longitude' , y = 'latitude' ,
-                    hover_data = ['type_local' , 'valeur_fonciere' , 'surface_reelle_bati' , 'surface_terrain'] ,
-                    range_y = [data[mask_dom_tom]['latitude'].min() , data[mask_dom_tom]['latitude'].max()] ,
-                    range_x = [data[mask_dom_tom]['longitude'].min() , data[mask_dom_tom]['longitude'].max()] , color = 'type_local')
+    fig = px.density_mapbox(
+        data[mask_dom_tom] , lat = 'latitude' , lon = 'longitude' , radius = 1 ,
+        center = dict(lat = 46.6, lon = 2.2) , zoom = 4 , mapbox_style = 'open-street-map',
+        color_continuous_scale = 'Inferno',
+    )
+    fig.update_layout(height=500)
 
     st.plotly_chart(fig)
+
+
+    st.text("")
+    st.text("")
+    st.text("")
+    st.text("")
+    st.text("")
+
+    st.write(f'Price evolution {min(YEAR_FILES)}-{max(YEAR_FILES)} (France)')
+    st.caption("Loads every year the first time — a few minutes — then stays cached for the session.")
+
+    if st.button("Show price evolution across all years"):
+        with st.spinner("Loading all years..."):
+            evolution = pd.concat([year_price_summary(y) for y in YEAR_FILES])
+
+        fig = px.line(
+            evolution , x = 'year' , y = 'prix_m_carre' , color = 'type_local' , markers = True,
+            labels = {'prix_m_carre': 'Median price per m²', 'year': 'Year', 'type_local': 'Property type'},
+        )
+        st.plotly_chart(fig)
 
 def exploration():
 
@@ -291,9 +347,9 @@ def exploration():
     mask_prix_m_carre_diff_inf = data['prix_m_carre'] != np.inf
 
     if(option_local != 'Terrain'):
-        st.write('Square Meter Price by Departement')
+        st.write('Square Meter Median Price by Departement')
 
-        df_price_by_region = pd.DataFrame(data[mask_prix_m_carre_diff_inf][mask_departement][mask_local].groupby(by = 'nom_departement')['prix_m_carre'].mean().reset_index())
+        df_price_by_region = pd.DataFrame(data[mask_prix_m_carre_diff_inf][mask_departement][mask_local].groupby(by = 'nom_departement')['prix_m_carre'].median().reset_index())
 
         fig = px.bar(df_price_by_region , x = 'nom_departement' , y = 'prix_m_carre')
 
