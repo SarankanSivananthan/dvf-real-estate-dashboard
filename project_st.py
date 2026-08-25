@@ -35,11 +35,11 @@ def intro():
 
     
 
-@st.cache
+@st.cache_data
 def read_main_CSV(path):
         return pd.read_csv(path)
 
-@st.cache(allow_output_mutation=True)
+@st.cache_data
 def sample(main_CSV , frac):
         return main_CSV.sample(frac = frac)
 
@@ -50,15 +50,15 @@ def count_rows(rows):
 def get_month(dt):
     return dt.month
 
-@st.cache
-def apply_fct(col , fct):
-    return col.apply(fct)
+@st.cache_data
+def apply_fct(col , _fct):
+    return col.apply(_fct)
 
-@st.cache(allow_output_mutation=True)
+@st.cache_data
 def merge(df1 , df2 , on , how):
     return pd.merge(df1 , df2 , on = on , how = how)
 
-@st.cache(allow_output_mutation=True)
+@st.cache_data
 def process(df1 , df_dept):
 
 
@@ -348,11 +348,98 @@ def exploration(datasets):
     
         st.plotly_chart(fig)
 
-def prediction():
+@st.cache_resource
+def train_price_model(df_train):
+    import numpy as np
+    from sklearn.compose import ColumnTransformer
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.metrics import mean_absolute_error, r2_score
+    from sklearn.model_selection import train_test_split
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import OneHotEncoder
+
+    feature_cols = ['type_local', 'surface_reelle_bati', 'nombre_pieces_principales', 'nom_departement']
+
+    mask = (
+        (df_train['nature_mutation'] == 'Vente')
+        & df_train['type_local'].isin(['Maison', 'Appartement'])
+        & (df_train['surface_reelle_bati'] > 8)
+        & df_train['nombre_pieces_principales'].notna()
+        & df_train['valeur_fonciere'].between(5000, 2_000_000)
+    )
+    data = df_train.loc[mask, feature_cols + ['valeur_fonciere']].dropna()
+
+    X = data[feature_cols]
+    y = np.log1p(data['valeur_fonciere'])
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    preprocessor = ColumnTransformer([
+        ('categorical', OneHotEncoder(handle_unknown='ignore'), ['type_local', 'nom_departement']),
+    ], remainder='passthrough')
+
+    model = Pipeline([
+        ('preprocessor', preprocessor),
+        ('regressor', RandomForestRegressor(n_estimators=60, max_depth=10, min_samples_leaf=15, n_jobs=-1, random_state=42)),
+    ])
+    model.fit(X_train, y_train)
+
+    predictions = model.predict(X_test)
+    r2 = r2_score(np.expm1(y_test), np.expm1(predictions))
+    mae = mean_absolute_error(np.expm1(y_test), np.expm1(predictions))
+
+    return model, r2, mae, sorted(data['nom_departement'].unique())
+
+
+def prediction(df_train):
+    import numpy as np
+    import pandas as pd
     import streamlit as st
 
-    st.write('# Work in progress... 🛠')
-        
+    st.title("Estimation - Prediction 🧠")
+
+    st.write(
+        "Estimate the sale price of a house or an apartment from its characteristics, "
+        "using a Random Forest model trained on 2019 DVF sales data."
+    )
+
+    with st.spinner("Training the price estimation model..."):
+        model, r2, mae, departements = train_price_model(df_train)
+
+    st.caption(f"Model performance on held-out data — R²: {r2:.2f} · Mean absolute error: €{mae:,.0f}")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        type_local = st.selectbox("Property type", ["Appartement", "Maison"])
+        default_dept = departements.index("Paris") if "Paris" in departements else 0
+        departement = st.selectbox("Departement", departements, index=default_dept)
+
+    with col2:
+        surface = st.number_input("Living area (m²)", min_value=9, max_value=1000, value=60, step=1)
+        rooms = st.number_input("Number of main rooms", min_value=1, max_value=20, value=3, step=1)
+
+    to_predict = pd.DataFrame([{
+        "type_local": type_local,
+        "surface_reelle_bati": surface,
+        "nombre_pieces_principales": rooms,
+        "nom_departement": departement,
+    }])
+
+    predicted_price = np.expm1(model.predict(to_predict))[0]
+    price_per_m2 = predicted_price / surface
+
+    st.write("")
+
+    metric_col1, metric_col2 = st.columns(2)
+    metric_col1.metric("Estimated price", f"€{predicted_price:,.0f}")
+    metric_col2.metric("Price per m²", f"€{price_per_m2:,.0f}")
+
+    st.caption(
+        "⚠️ Indicative estimate based on property type, surface, room count and department "
+        "only — it does not account for exact location, condition or amenities, and is not "
+        "a substitute for a professional appraisal."
+    )
 
 
 
@@ -376,6 +463,7 @@ def main():
 
     df2019_sample_small = process(df2019_sample_small , df_dept)
     df2020_sample_small = process(df2020_sample_small , df_dept)
+    df2019_sample_big = process(df2019_sample_big , df_dept)
 
     datasets = {2019 : df2019_sample_small,
                 2020 : df2020_sample_small}
@@ -390,8 +478,12 @@ def main():
     }
 
     demo_name = st.sidebar.selectbox("Exploration Type", page_names_to_funcs.keys())
-    if(demo_name == "Home page 🏠" or demo_name == "Estimation - Prediction 🧠") : page_names_to_funcs[demo_name]()
-    else : page_names_to_funcs[demo_name](datasets)
+    if demo_name == "Home page 🏠":
+        page_names_to_funcs[demo_name]()
+    elif demo_name == "Estimation - Prediction 🧠":
+        page_names_to_funcs[demo_name](df2019_sample_big)
+    else:
+        page_names_to_funcs[demo_name](datasets)
 
 
 
