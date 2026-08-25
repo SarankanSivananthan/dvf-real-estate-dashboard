@@ -13,7 +13,7 @@ Projet Master 1 — Data Visualization, Efrei Paris.
 | 🏠 **Accueil** | Présentation du projet |
 | 📊 **Visualisations générales** | Fréquence des mutations, tendance mensuelle, répartition par type de bien, prix moyen par département/région, carte des transactions — pour 2019 ou 2020 |
 | 🔎 **Votre exploration** | Filtres interactifs (type de mutation, type de bien, région/département, nb. de pièces), nuage de points prix/surface, carte vue d'ensemble ou détaillée |
-| 🧠 **Estimation / Prédiction** | En cours de développement |
+| 🧠 **Estimation / Prédiction** | Estimation du prix de vente d'une maison ou d'un appartement (type de bien, surface, nb. de pièces, département) via un modèle Random Forest entraîné sur les ventes 2019 |
 
 ## 📂 Structure du projet
 
