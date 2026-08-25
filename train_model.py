@@ -49,10 +49,20 @@ def clean(df, df_dept):
     df_dept["code_departement"] = df_dept["code_departement"].astype(str)
     df = df.merge(df_dept, on="code_departement", how="left")
 
+    # DVF records the full transaction value on every row of a bulk sale
+    # (e.g. a whole apartment building sold as one mutation, split into one
+    # row per unit) instead of splitting it per unit. Excluding mutations
+    # that contain more than one Maison/Appartement row avoids those rows
+    # wrecking any price statistic (nombre_lots does NOT catch this — it's
+    # a per-row lot count, unrelated to how many rows share one mutation).
+    residential = df["type_local"].isin(["Maison", "Appartement"])
+    residential_units_per_mutation = df[residential].groupby("id_mutation").size()
+    single_unit_mutation = df["id_mutation"].map(residential_units_per_mutation).fillna(0) <= 1
+
     mask = (
         (df["nature_mutation"] == "Vente")
-        & df["type_local"].isin(["Maison", "Appartement"])
-        & (df["nombre_lots"] <= 1)
+        & residential
+        & single_unit_mutation
         & df["surface_reelle_bati"].between(9, 500)
         & df["nombre_pieces_principales"].between(1, 12)
         & df["valeur_fonciere"].between(10_000, 2_000_000)
