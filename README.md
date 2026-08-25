@@ -1,170 +1,170 @@
-# 🏠 Dashboard Immobilier DVF
+# 🏠 DVF Real Estate Dashboard
 
-Un dashboard **Streamlit** interactif pour explorer les transactions immobilières en France à partir des données ouvertes **DVF** (*Demandes de Valeurs Foncières*, publiées par l'État) : visualisations sur 2019-2024, exploration filtrée, et un module d'estimation de prix entraîné sur le marché actuel.
+An interactive **Streamlit** dashboard for exploring French real estate transactions from the open **DVF** dataset (*Demandes de Valeurs Foncières*, published by the French government): 2019-2024 visualizations, filtered exploration, and a price estimation module trained on the current market.
 
-Projet Master 1 — Data Visualization, Efrei Paris.
+Master 1 project — Data Visualization, Efrei Paris.
 
-![Aperçu — ventes par mois](img/sales_by_month.png)
+![Preview — sales by month](img/sales_by_month.png)
 
-## Sommaire
+## Contents
 
-- [Fonctionnalités](#-fonctionnalités)
-- [Comment fonctionne le module de prédiction](#-comment-fonctionne-le-module-de-prédiction)
-- [Structure du projet](#-structure-du-projet)
-- [Données](#-données)
-- [Ré-entraîner le modèle](#-ré-entraîner-le-modèle-de-prédiction)
-- [Lancer le projet](#-lancer-le-projet)
+- [Features](#-features)
+- [How the prediction module works](#-how-the-prediction-module-works)
+- [Project structure](#-project-structure)
+- [Data](#-data)
+- [Retraining the model](#-retraining-the-prediction-model)
+- [Running the project](#-running-the-project)
 
-## ✨ Fonctionnalités
+## ✨ Features
 
-### 🏠 Accueil
-Présentation du projet.
+### 🏠 Home
+Project introduction.
 
-### 📊 Visualisations générales
-Vue d'ensemble du marché pour une année choisie (slider 2019-2024) :
+### 📊 General Visualizations
+A market overview for a chosen year (2019-2024 slider):
 
-- **Fréquence des mutations** — répartition par nature de transaction (Vente, Vente en l'état futur d'achèvement, Échange, Expropriation...)
-- **Tendance mensuelle** — nombre de ventes par mois, pour repérer la saisonnalité
-- **Répartition par type de bien** — Maison, Appartement, Dépendance, Terrain, Local commercial (camembert)
-- **Prix médian par département** — Maison/Appartement uniquement, barres horizontales triées, départements avec moins de 20 ventes échantillonnées exclus (statistique non fiable sur trop peu de données)
-- **Prix au m² médian par région** — trié par ordre décroissant
-- **Carte de densité des mutations** — heatmap sur fond de carte réel (OpenStreetMap)
-- **Évolution 2019-2024** — prix médian au m² par année (Maison vs Appartement), derrière un bouton car cela charge les 6 années de données au premier clic (quelques minutes), puis reste en cache pour la session
+- **Mutation frequency** — breakdown by transaction type (Sale, Off-plan sale, Exchange, Expropriation...)
+- **Monthly trend** — number of sales per month, to spot seasonality
+- **Property type breakdown** — House, Apartment, Outbuilding, Land, Commercial premises (pie chart)
+- **Median price by department** — Houses and Apartments only, sorted horizontal bars, departments with fewer than 20 sampled sales excluded (too little data to be a reliable statistic)
+- **Median price per m² by region** — sorted in descending order
+- **Mutation density map** — a heatmap on a real map background (OpenStreetMap)
+- **2019-2024 evolution** — median price per m² by year (House vs. Apartment), behind a button since it loads all 6 years of data on first click (a few minutes), then stays cached for the session
 
-Les prix affichés utilisent la **médiane** plutôt que la moyenne : les données DVF brutes contiennent des valeurs aberrantes (voir plus bas) qui fausseraient une moyenne.
+Prices shown use the **median** rather than the mean: the raw DVF data contains outlier values (see below) that would otherwise skew a mean.
 
-### 🔎 Votre exploration
-Exploration filtrée pour une année choisie :
+### 🔎 Your Exploration
+Filtered exploration for a chosen year:
 
-- Filtres : type de mutation, type de bien, régions, départements, nombre de pièces
-- Histogramme des transactions par mois selon les filtres
-- Prix au m² médian par département (sur la sélection)
-- Nuage de points prix / surface (taille des points = nombre de pièces)
-- Carte des transactions filtrées — vue d'ensemble (`st.map`) ou détaillée (carte interactive avec info-bulles)
+- Filters: transaction type, property type, regions, departments, number of rooms
+- Histogram of transactions by month for the current filters
+- Median price per m² by department (on the current selection)
+- Price vs. surface scatter plot (point size = number of rooms)
+- Map of the filtered transactions — overview (`st.map`) or detailed (interactive map with tooltips)
 
-### 🧠 Estimation / Prédiction
-Estime le prix de vente d'une maison ou d'un appartement à partir de son type, sa commune, sa surface et son nombre de pièces, via un modèle de machine learning pré-entraîné. Détails complets ci-dessous.
+### 🧠 Estimation / Prediction
+Estimates the sale price of a house or apartment from its type, commune, surface, and number of rooms, using a pre-trained machine learning model. Full details below.
 
-## 🧠 Comment fonctionne le module de prédiction
+## 🧠 How the prediction module works
 
-Le module de prédiction est **entraîné hors-ligne** par [`train_model.py`](train_model.py) et le résultat est embarqué dans le repo (`model/price_model.joblib`, ~3 Mo) : l'application ne fait que le **charger et l'exécuter**, elle ne ré-entraîne jamais rien au runtime. Voici le détail de chaque étape de la construction du modèle.
+The prediction module is **trained offline** by [`train_model.py`](train_model.py), and the result is shipped in the repo (`model/price_model.joblib`, ~3MB): the app only **loads and runs it** — it never retrains anything at runtime. Here is a full breakdown of how the model is built.
 
-### 1. Données sources
+### 1. Source data
 
-Les deux années DVF les plus récentes et complètes disponibles : **2023 et 2024** (~7.3 millions de lignes brutes cumulées), téléchargées depuis le dépôt officiel [files.data.gouv.fr/geo-dvf](https://files.data.gouv.fr/geo-dvf/latest/csv/).
+The two most recent, complete DVF years available: **2023 and 2024** (~7.3 million raw rows combined), downloaded from the official [files.data.gouv.fr/geo-dvf](https://files.data.gouv.fr/geo-dvf/latest/csv/) repository.
 
-**Pourquoi seulement 2 ans, et pas tout l'historique 2019-2024 ?** L'objectif du module est d'estimer un prix **par rapport au marché actuel**. Mélanger plusieurs années sans corriger l'inflation immobilière biaiserait l'estimation vers des prix datés. Se limiter aux années les plus récentes évite ce biais sans complexifier le modèle avec un indice de correction des prix.
+**Why only 2 years, instead of the full 2019-2024 history?** The goal of this module is to estimate a price **relative to today's market**. Blending several years without correcting for real-estate price inflation would bias the estimate toward dated prices. Sticking to the most recent years avoids that bias without adding the complexity of a price-trend correction.
 
-### 2. Nettoyage des données
+### 2. Data cleaning
 
-Sur les 7.3M lignes brutes, plusieurs filtres successifs réduisent le jeu de données à **1 378 860 lignes exploitables** :
+Out of 7.3M raw rows, a series of filters narrows the dataset down to **1,378,860 usable rows**:
 
-| Filtre | Pourquoi |
+| Filter | Why |
 |---|---|
-| `nature_mutation == 'Vente'` | Exclut les échanges, expropriations, adjudications — on ne veut que des ventes classiques |
-| `type_local ∈ {Maison, Appartement}` | Exclut terrains et locaux commerciaux, dont la dynamique de prix n'a rien à voir |
-| **Déduplication des ventes en bloc** (voir encadré ci-dessous) | Corrige un artefact majeur des données DVF |
-| `surface_reelle_bati` entre 9 et 500 m² | Exclut les erreurs de saisie (surfaces nulles ou absurdes) |
-| `nombre_pieces_principales` entre 1 et 12 | Idem |
-| `valeur_fonciere` entre 10 000 € et 2 000 000 € | Exclut les valeurs extrêmes non représentatives |
-| `code_commune` renseigné | Nécessaire pour le signal de prix par commune (étape suivante) |
+| `nature_mutation == 'Vente'` | Excludes exchanges, expropriations, auctions — keep only regular sales |
+| `type_local ∈ {Maison, Appartement}` | Excludes land and commercial premises, whose price dynamics are unrelated |
+| **Bulk-sale deduplication** (see box below) | Fixes a major artifact in the DVF data |
+| `surface_reelle_bati` between 9 and 500 m² | Excludes data-entry errors (zero or absurd surfaces) |
+| `nombre_pieces_principales` between 1 and 12 | Same |
+| `valeur_fonciere` between €10,000 and €2,000,000 | Excludes non-representative extreme values |
+| `code_commune` present | Required for the per-commune price signal (next step) |
 
-> **🐛 Le bug des ventes en bloc.** DVF enregistre parfois une transaction portant sur plusieurs logements (ex : un immeuble entier vendu en une fois) en répétant la **valeur totale de la transaction sur chaque ligne/logement**, au lieu de la répartir. Un seul cas réel rencontré en construisant ce projet : une vente à Bourges où 1105 lignes affichaient chacune 54 257 152 € — la valeur du *bloc entier*, pas d'un logement. Sans correction, ce genre de ligne fait exploser n'importe quelle statistique de prix pour son département. La correction : on compte, pour chaque transaction (`id_mutation`), le nombre de lignes Maison/Appartement qu'elle contient — si plus d'une, la transaction est exclue (`nombre_lots` ne suffit pas : c'est un compteur par ligne, pas par transaction). Cette même correction est appliquée à la fois ici et dans le pipeline des visualisations (`process()` dans `project_st.py`).
+> **🐛 The bulk-sale bug.** DVF sometimes records a transaction covering multiple housing units (e.g. a whole apartment building sold in one deal) by repeating the **full transaction value on every unit's row**, instead of splitting it. One real case hit while building this project: a sale in Bourges where 1,105 rows each showed €54,257,152 — the value of the *entire block*, not of one unit. Left uncorrected, a handful of rows like this can wreck any price statistic for their department. The fix: for each transaction (`id_mutation`), count how many Maison/Appartement rows it contains — if more than one, the transaction is excluded (`nombre_lots` alone isn't enough: it's a per-row lot count, unrelated to how many rows share one transaction). The same fix is applied both here and in the visualization pipeline (`process()` in `project_st.py`).
 
-### 3. Feature engineering — le signal de prix par commune
+### 3. Feature engineering — the commune price signal
 
-Le modèle utilise 5 variables :
+The model uses 5 features:
 
-| Variable | Description |
+| Feature | Description |
 |---|---|
-| `type_local` | Maison ou Appartement (encodé en one-hot) |
-| `surface_reelle_bati` | Surface habitable (m²) |
-| `nombre_pieces_principales` | Nombre de pièces |
-| `annee_mutation` | 2023 ou 2024, pour capter une éventuelle tendance à court terme |
-| `price_signal` | **Prix médian au m² observé dans la commune du bien**, pour son type de bien |
+| `type_local` | House or Apartment (one-hot encoded) |
+| `surface_reelle_bati` | Living area (m²) |
+| `nombre_pieces_principales` | Number of rooms |
+| `annee_mutation` | 2023 or 2024, to capture any short-term trend |
+| `price_signal` | **Median price per m² observed in the property's commune**, for its property type |
 
-Le `price_signal` est ce qui fait vraiment la différence : le département seul (96 valeurs possibles) est une maille bien trop grossière pour la France (ex : le 7ème arrondissement de Paris et le 19ème n'ont pas du tout le même marché, mais tous deux sont "Paris"). La commune (~35 000 valeurs) capture bien mieux la localisation.
+The `price_signal` is what really makes the difference: the department alone (96 possible values) is far too coarse a grid for France (e.g. Paris's 7th and 19th arrondissements don't share anything close to the same market, yet both are just "Paris"). The commune (~35,000 possible values) captures location far better.
 
-**Problème avec la commune brute** : certaines communes ont très peu de ventes dans l'échantillon (parfois une seule), rendant leur médiane locale peu fiable. On applique donc un **lissage bayésien** vers la médiane du département :
+**The problem with raw commune data**: some communes have very few sales in the sample (sometimes just one), making their local median unreliable. A **Bayesian shrinkage** toward the department median is applied:
 
 ```
-price_signal = (n × médiane_commune + k × médiane_département) / (n + k)
+price_signal = (n × commune_median + k × department_median) / (n + k)
 ```
 
-où `n` = nombre de ventes observées dans la commune, et `k = 15` (constante de lissage). Une commune avec beaucoup de ventes (`n` grand) garde sa propre médiane ; une commune avec peu de ventes est automatiquement tirée vers la médiane, plus fiable, de son département. Si une commune n'a aucune vente dans les données d'entraînement, le signal retombe entièrement sur la médiane départementale (`dept_fallback`).
+where `n` = number of observed sales in the commune, and `k = 15` (smoothing constant). A commune with many sales (large `n`) keeps close to its own median; a commune with few sales gets pulled toward the more reliable department median. If a commune has zero sales in the training data, the signal falls back entirely to the department median (`dept_fallback`).
 
-**Éviter la fuite de données (data leakage)** : ce calcul est effectué **uniquement sur les données d'entraînement** (après le split train/test), puis appliqué tel quel aux données de test. Si on l'avait calculé sur l'ensemble des données avant de séparer train/test, chaque ligne de test aurait indirectement "vu" sa propre valeur cible via la médiane de sa commune — le R² mesuré aurait été artificiellement gonflé.
+**Avoiding data leakage**: this lookup is computed **only on the training split** (after the train/test split), then applied as-is to the test data. Computing it on the full dataset before splitting would let each test row indirectly "see" its own target value through its commune's median — inflating the measured R² artificially.
 
-### 4. Entraînement
+### 4. Training
 
-- **Split** : 80 % train / 20 % test, aléatoire (`random_state=42` pour la reproductibilité)
-- **Cible** : `log(1 + valeur_fonciere)` plutôt que le prix brut — les prix immobiliers sont fortement asymétriques (quelques ventes très chères), et travailler en log stabilise l'apprentissage. On applique `expm1` (l'inverse) pour revenir en euros au moment de la prédiction.
-- **Modèle** : [`HistGradientBoostingRegressor`](https://scikit-learn.org/stable/modules/ensemble.html#histogram-based-gradient-boosting) (scikit-learn) — un gradient boosting par histogrammes, rapide même sur plus d'un million de lignes (~50 secondes d'entraînement) et généralement plus performant qu'une forêt aléatoire sur ce type de données tabulaires.
+- **Split**: 80% train / 20% test, random (`random_state=42` for reproducibility)
+- **Target**: `log(1 + valeur_fonciere)` rather than the raw price — real estate prices are strongly right-skewed (a few very expensive sales), and working in log-space stabilizes training. `expm1` (the inverse) is applied to convert back to euros at prediction time.
+- **Model**: [`HistGradientBoostingRegressor`](https://scikit-learn.org/stable/modules/ensemble.html#histogram-based-gradient-boosting) (scikit-learn) — a histogram-based gradient boosting regressor, fast even on over a million rows (~50 seconds to train) and generally stronger than a random forest on this kind of tabular data.
   - `max_iter=300`, `learning_rate=0.08`, `max_depth=8`, `l2_regularization=1.0`
-- **Prétraitement** : `type_local` encodé en one-hot via un `ColumnTransformer` ; les autres variables passent telles quelles (`remainder='passthrough'`)
+- **Preprocessing**: `type_local` one-hot encoded via a `ColumnTransformer`; the other features pass through unchanged (`remainder='passthrough'`)
 
-### 5. Évaluation
+### 5. Evaluation
 
-Mesurée sur les 20 % de données de test (jamais vues pendant l'entraînement), en repassant en euros (`expm1`) :
+Measured on the 20% test split (never seen during training), converted back to euros (`expm1`):
 
-| Métrique | Valeur | Interprétation |
+| Metric | Value | Meaning |
 |---|---|---|
-| **R²** | **0.70** | Le modèle explique 70 % de la variance des prix de vente — bon score pour ce type de données : DVF ne contient ni l'étage, ni l'état du bien, ni la vue, ni les prestations, qui expliquent une bonne partie du prix restant |
-| **MAE** | **≈ 60 175 €** | En moyenne, l'estimation s'écarte du prix réel de vente d'environ 60 000 € |
+| **R²** | **0.70** | The model explains 70% of the variance in sale prices — a solid score for this kind of data: DVF contains neither floor, condition, view, nor amenities, which account for a good part of the remaining price variation |
+| **MAE** | **≈ €60,175** | On average, the estimate is off from the actual sale price by about €60,000 |
 
-Ces deux métriques sont recalculées à chaque exécution de `train_model.py` et affichées directement dans l'app (caption sous le titre de la page Prédiction), pour rester toujours synchronisées avec le modèle réellement chargé.
+Both metrics are recomputed every time `train_model.py` runs and displayed directly in the app (caption under the Prediction page title), so they always stay in sync with the actually-loaded model.
 
-### 6. À l'exécution (dans l'app)
+### 6. At runtime (in the app)
 
-1. L'utilisateur choisit : type de bien → département → commune (liste filtrée par département) → surface → nombre de pièces
-2. L'app récupère le `price_signal` de la commune choisie dans le lookup (avec repli département si absent)
-3. Le modèle prédit `log(1 + prix)` à partir des 5 features, puis on repasse en euros
-4. Affichage du prix estimé et du prix au m²
+1. The user picks: property type → department → commune (list filtered by department) → surface → number of rooms
+2. The app looks up the `price_signal` for the chosen commune (falling back to the department if not found)
+3. The model predicts `log(1 + price)` from the 5 features, then it's converted back to euros
+4. The estimated price and price per m² are displayed
 
-Le chargement de `price_model.joblib` (`joblib.load`) est mis en cache (`st.cache_resource`) : quasi instantané dès le premier accès à la page.
+Loading `price_model.joblib` (`joblib.load`) is cached (`st.cache_resource`): near-instant from the first visit to the page onward.
 
-### Limites assumées
+### Known limitations
 
-- Estimation **indicative** : ne tient pas compte de l'adresse exacte, de l'étage, de l'état du bien, des prestations (balcon, parking, vue...)
-- Le signal de commune peut être peu discriminant pour les communes très peu vendues (repli département)
-- Ne remplace pas une estimation professionnelle
+- The estimate is **indicative only**: it doesn't account for exact address, floor, condition, or amenities (balcony, parking, view...)
+- The commune signal can be weakly discriminative for very low-volume communes (falls back to department)
+- Not a substitute for a professional appraisal
 
-## 📂 Structure du projet
+## 📂 Project structure
 
 ```
-project_st.py           # application Streamlit (4 pages)
-train_model.py           # entraînement hors-ligne du modèle de prédiction
+project_st.py           # Streamlit application (4 pages)
+train_model.py           # offline training script for the prediction model
 model/
-  └── price_model.joblib    # modèle pré-entraîné + lookup communes (inclus, ~3 Mo)
-project.ipynb            # notebook d'exploration et de nettoyage (données 2019)
-dvf_test.ipynb           # notebook de test (imputation KNN, abandonné)
+  └── price_model.joblib    # pre-trained model + commune lookup (included, ~3MB)
+project.ipynb            # exploration and cleaning notebook (2019 data)
+dvf_test.ipynb           # scratch/test notebook (KNN imputation, abandoned)
 data/
-  └── departements-france.csv   # table de référence département/région (incluse)
+  └── departements-france.csv   # department/region reference table (included)
 ```
 
-## 📥 Données
+## 📥 Data
 
-Les jeux de données de transactions sont trop volumineux pour être versionnés ici (des centaines de Mo à plusieurs Go par année). Télécharge les années nécessaires et place-les dans `data/` :
+The transaction datasets are too large to version here (hundreds of MB to a few GB per year). Download the years you need and place them in `data/`:
 
-- **2019-2020** (historique) — depuis [data.gouv.fr — Demandes de valeurs foncières](https://www.data.gouv.fr/fr/datasets/demandes-de-valeurs-foncieres/) :
+- **2019-2020** (historical) — from [data.gouv.fr — Demandes de valeurs foncières](https://www.data.gouv.fr/fr/datasets/demandes-de-valeurs-foncieres/):
   - `data/full_2019.csv`
   - `data/sampled_2020_by_dep.csv`
-- **2021-2024** (historique récent + entraînement du modèle) — depuis le dépôt officiel [files.data.gouv.fr/geo-dvf](https://files.data.gouv.fr/geo-dvf/latest/csv/) (fichier `full.csv.gz` de chaque année, à décompresser) :
+- **2021-2024** (recent history + model training) — from the official [files.data.gouv.fr/geo-dvf](https://files.data.gouv.fr/geo-dvf/latest/csv/) repository (each year's `full.csv.gz`, to be decompressed):
   - `data/dvf_2021.csv`, `data/dvf_2022.csv`, `data/dvf_2023.csv`, `data/dvf_2024.csv`
 
-Seule `data/departements-france.csv` (table de référence, quelques Ko) est versionnée.
+Only `data/departements-france.csv` (reference table, a few KB) is versioned.
 
-**Le module de prédiction n'a besoin d'aucun de ces CSV** pour fonctionner dans l'app — le modèle déjà entraîné (`model/price_model.joblib`) est inclus dans le repo. Les CSV ne sont nécessaires que pour les pages de visualisation, ou si tu veux ré-entraîner le modèle toi-même.
+**The prediction module needs none of these CSVs** to run in the app — the already-trained model (`model/price_model.joblib`) is included in the repo. The raw CSVs are only needed for the visualization pages, or if you want to retrain the model yourself.
 
-## 🧠 Ré-entraîner le modèle de prédiction
+## 🧠 Retraining the prediction model
 
 ```bash
 python train_model.py
 ```
 
-Nécessite `data/dvf_2023.csv` et `data/dvf_2024.csv` (voir ci-dessus). Régénère `model/price_model.joblib` avec les métriques R²/MAE à jour, affichées dans la console et automatiquement reprises par l'app.
+Requires `data/dvf_2023.csv` and `data/dvf_2024.csv` (see above). Regenerates `model/price_model.joblib` with up-to-date R²/MAE metrics, printed to the console and automatically picked up by the app.
 
-## 🚀 Lancer le projet
+## 🚀 Running the project
 
 ```bash
 pip install -r requirements.txt
